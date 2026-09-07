@@ -1,0 +1,110 @@
+name: Build and publish apt repository (RustDesk)
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório actual
+        uses: actions/checkout@v4
+
+      - name: Instalar ferramentas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev apt-utils gnupg curl jq
+
+      - name: Descarregar o último .deb oficial do RustDesk
+        run: |
+          # Obter a URL do último release .deb (x86_64/amd64)
+          DEB_URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | jq -r '.assets[] | select(.name | test("rustdesk-.*x86_64\\.deb$|rustdesk-.*amd64\\.deb$")) | .browser_download_url' | head -n 1)
+
+          if [ -z "$DEB_URL" ]; then
+            echo "::error::Nenhum ficheiro .deb encontrado no último release do RustDesk."
+            exit 1
+          fi
+
+          echo "A descarregar: $DEB_URL"
+          curl -L -o rustdesk_temp.deb "$DEB_URL"
+
+          # Normalizar o nome para o formato padrão Debian (nome_versão_arquitetura.deb)
+          ORIGINAL_NAME=$(basename "$DEB_URL")
+          VERSION=$(echo "$ORIGINAL_NAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?')
+          NEW_NAME="rustdesk_${VERSION}_amd64.deb"
+
+          echo "A renomear $ORIGINAL_NAME para $NEW_NAME"
+          mv rustdesk_temp.deb "$NEW_NAME"
+          ls -la *.deb
+
+      - name: Criar estrutura do site APT
+        run: |
+          mkdir -p site/pool/main/r/rustdesk
+          mkdir -p site/dists/stable/main/binary-amd64
+          cp ./*.deb site/pool/main/r/rustdesk/
+
+      - name: Importar chave GPG
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          GPG_KEY_ID="$(gpg --list-keys --with-colons | awk -F: '/^pub:/ {print $5; exit}')"
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> "$GITHUB_ENV"
+          gpg --export --armor "$GPG_KEY_ID" > site/KEY.gpg
+
+      - name: Gerar metadados APT
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          cd site
+          # Gerar Packages
+          dpkg-scanpackages pool/main /dev/null 2>/dev/null \
+            > dists/stable/main/binary-amd64/Packages
+          gzip -9c dists/stable/main/binary-amd64/Packages \
+            > dists/stable/main/binary-amd64/Packages.gz
+
+          # Criar ficheiro de configuração para o Release
+          cat > /tmp/ftp-release.conf << EOF
+          APT::FTPArchive::Release::Origin "RustDesk Unofficial Repo";
+          APT::FTPArchive::Release::Label "RustDesk";
+          APT::FTPArchive::Release::Suite "stable";
+          APT::FTPArchive::Release::Codename "stable";
+          APT::FTPArchive::Release::Architectures "amd64";
+          APT::FTPArchive::Release::Components "main";
+          APT::FTPArchive::Release::Description "Repositório não oficial de pacotes Debian para RustDesk";
+          EOF
+
+          cd dists/stable
+          apt-ftparchive release -c=/tmp/ftp-release.conf . > Release
+
+          # Assinar com GPG (usando passphrase via loopback)
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+            --default-key "$GPG_KEY_ID" --clearsign -o InRelease Release
+
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+            --default-key "$GPG_KEY_ID" --detach-sign --armor -o Release.gpg Release
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publicar no GitHub Pages
+        uses: actions/deploy-pages@v4
