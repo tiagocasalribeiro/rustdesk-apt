@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # Necessário para criar Releases e fazer upload de activos
   pages: write
   id-token: write
 
@@ -29,26 +29,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev apt-utils gnupg curl jq
 
-      - name: Descarregar o último .deb oficial do RustDesk
+      - name: Descarregar .deb e obter changelog original
         run: |
-          # Obter a URL do último release .deb (x86_64/amd64)
-          DEB_URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest | jq -r '.assets[] | select(.name | test("rustdesk-.*x86_64\\.deb$|rustdesk-.*amd64\\.deb$")) | .browser_download_url' | head -n 1)
-
+          # 1. Obter dados do último release oficial do RustDesk
+          RELEASE_DATA=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest)
+          
+          # 2. Extrair URL do .deb (amd64/x86_64)
+          DEB_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | test("rustdesk-.*x86_64\\.deb$|rustdesk-.*amd64\\.deb$")) | .browser_download_url' | head -n 1)
+          
           if [ -z "$DEB_URL" ]; then
             echo "::error::Nenhum ficheiro .deb encontrado no último release do RustDesk."
             exit 1
           fi
 
+          # 3. Extrair tag da versão e corpo do changelog
+          TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name')
+          CHANGELOG=$(echo "$RELEASE_DATA" | jq -r '.body')
+          
+          # Guardar o changelog num ficheiro para usar na Release
+          echo "$CHANGELOG" > RELEASE_BODY.md
+          
+          # 4. Descarregar e normalizar o nome do ficheiro
           echo "A descarregar: $DEB_URL"
           curl -L -o rustdesk_temp.deb "$DEB_URL"
-
-          # Normalizar o nome para o formato padrão Debian (nome_versão_arquitetura.deb)
+          
           ORIGINAL_NAME=$(basename "$DEB_URL")
-          VERSION=$(echo "$ORIGINAL_NAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?')
+          VERSION=$(echo "$ORIGINAL_NAME" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?' | head -n 1)
           NEW_NAME="rustdesk_${VERSION}_amd64.deb"
-
+          
           echo "A renomear $ORIGINAL_NAME para $NEW_NAME"
           mv rustdesk_temp.deb "$NEW_NAME"
+          
+          # Exportar variáveis para os passos seguintes
+          echo "DEB_FILE=$NEW_NAME" >> $GITHUB_ENV
+          echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
+          
           ls -la *.deb
 
       - name: Criar estrutura do site APT
@@ -71,13 +86,11 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           cd site
-          # Gerar Packages
           dpkg-scanpackages pool/main /dev/null 2>/dev/null \
             > dists/stable/main/binary-amd64/Packages
           gzip -9c dists/stable/main/binary-amd64/Packages \
             > dists/stable/main/binary-amd64/Packages.gz
 
-          # Criar ficheiro de configuração para o Release
           cat > /tmp/ftp-release.conf << EOF
           APT::FTPArchive::Release::Origin "RustDesk Unofficial Repo";
           APT::FTPArchive::Release::Label "RustDesk";
@@ -91,7 +104,6 @@ jobs:
           cd dists/stable
           apt-ftparchive release -c=/tmp/ftp-release.conf . > Release
 
-          # Assinar com GPG (usando passphrase via loopback)
           gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
             --default-key "$GPG_KEY_ID" --clearsign -o InRelease Release
 
@@ -108,3 +120,15 @@ jobs:
 
       - name: Publicar no GitHub Pages
         uses: actions/deploy-pages@v4
+
+      - name: Criar Release no GitHub com o .deb e changelog
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: RustDesk ${{ env.RELEASE_TAG }} (Unofficial APT)
+          body_path: RELEASE_BODY.md
+          files: ${{ env.DEB_FILE }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
