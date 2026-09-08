@@ -49,7 +49,6 @@ jobs:
           echo "$FULL_BODY" > FULL_BODY.md
           
           # 4. Filtrar APENAS o changelog (remove a tabela de downloads e texto promocional)
-          # Encontra a linha que contem "changelog" (case-insensitive) e guarda a partir dai
           LINE_NUM=$(grep -i -n "changelog" FULL_BODY.md | head -n 1 | cut -d: -f1)
           if [ -n "$LINE_NUM" ]; then
             tail -n +"$LINE_NUM" FULL_BODY.md > CHANGELOG_ONLY.md
@@ -57,12 +56,11 @@ jobs:
             cp FULL_BODY.md CHANGELOG_ONLY.md
           fi
           
-          # 5. Criar o ficheiro final com o aviso de scam no topo (usando echo para evitar erros de YAML)
-          echo "⚠️ **AVISO DE SEGURANÇA / SCAM WARNING** ⚠️" > RELEASE_BODY.md
-          echo "" >> RELEASE_BODY.md
-          echo "Este repositorio é **NÃO OFICIAL**. O ficheiro \`.deb\` foi obtido automaticamente do repositorio oficial do RustDesk, mas este repositorio de pacotes APT **não é afiliado, endossado nem mantido** pela equipa oficial do RustDesk." >> RELEASE_BODY.md
-          echo "" >> RELEASE_BODY.md
-          echo "Utilize por sua conta e risco. Para a versão oficial, downloads directos e suporte, visite [rustdesk.com](https://rustdesk.com/)." >> RELEASE_BODY.md
+          # 5. Criar o ficheiro final com a imagem de aviso no topo
+          # NOTA: Substitua este URL pelo link 'Raw' permanente da imagem no seu proprio repositorio (ver instrucoes abaixo)
+          SCAM_IMAGE_URL="https://raw.githubusercontent.com/tiagocasalribeiro/rustdesk-apt/main/assets/scam_warning.png"
+          
+          echo "![Aviso de Seguranca / Scam Warning]($SCAM_IMAGE_URL)" > RELEASE_BODY.md
           echo "" >> RELEASE_BODY.md
           echo "---" >> RELEASE_BODY.md
           echo "" >> RELEASE_BODY.md
