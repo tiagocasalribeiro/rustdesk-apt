@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout do repositório actual
+      - name: Checkout do repositorio actual
         uses: actions/checkout@v4
 
       - name: Instalar ferramentas
@@ -31,38 +31,41 @@ jobs:
 
       - name: Descarregar .deb e preparar changelog limpo
         run: |
-          # 1. Obter dados do último release oficial do RustDesk
+          # 1. Obter dados do ultimo release oficial do RustDesk
           RELEASE_DATA=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest)
           
           # 2. Extrair URL do .deb (amd64/x86_64)
           DEB_URL=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | test("rustdesk-.*x86_64\\.deb$|rustdesk-.*amd64\\.deb$")) | .browser_download_url' | head -n 1)
           
           if [ -z "$DEB_URL" ]; then
-            echo "::error::Nenhum ficheiro .deb encontrado no último release do RustDesk."
+            echo "::error::Nenhum ficheiro .deb encontrado no ultimo release do RustDesk."
             exit 1
           fi
 
-          # 3. Extrair tag da versão e corpo do release
+          # 3. Extrair tag da versao e corpo do release
           TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name')
           FULL_BODY=$(echo "$RELEASE_DATA" | jq -r '.body // ""')
           
           echo "$FULL_BODY" > FULL_BODY.md
           
           # 4. Filtrar APENAS o changelog (remove a tabela de downloads e texto promocional)
-          # Procura pela primeira ocorrência de "Changelog" (com ou sem #) e imprime daí para a frente
-          awk 'BEGIN{IGNORECASE=1} /^#? *changelog/ {found=1} found' FULL_BODY.md > CHANGELOG_ONLY.md
+          # Encontra a linha que contem "changelog" (case-insensitive) e guarda a partir dai
+          LINE_NUM=$(grep -i -n "changelog" FULL_BODY.md | head -n 1 | cut -d: -f1)
+          if [ -n "$LINE_NUM" ]; then
+            tail -n +"$LINE_NUM" FULL_BODY.md > CHANGELOG_ONLY.md
+          else
+            cp FULL_BODY.md CHANGELOG_ONLY.md
+          fi
           
-          # 5. Criar o ficheiro final com o aviso de scam no topo
-          cat << 'EOF' > RELEASE_BODY.md
-⚠️ **AVISO DE SEGURANÇA / SCAM WARNING** ⚠️
-
-Este repositório é **NÃO OFICIAL**. O ficheiro `.deb` foi obtido automaticamente do repositório oficial do RustDesk, mas este repositório de pacotes APT **não é afiliado, endossado nem mantido** pela equipa oficial do RustDesk. 
-
-Utilize por sua conta e risco. Para a versão oficial, downloads directos e suporte, visite [rustdesk.com](https://rustdesk.com/).
-
----
-
-EOF
+          # 5. Criar o ficheiro final com o aviso de scam no topo (usando echo para evitar erros de YAML)
+          echo "⚠️ **AVISO DE SEGURANÇA / SCAM WARNING** ⚠️" > RELEASE_BODY.md
+          echo "" >> RELEASE_BODY.md
+          echo "Este repositorio é **NÃO OFICIAL**. O ficheiro \`.deb\` foi obtido automaticamente do repositorio oficial do RustDesk, mas este repositorio de pacotes APT **não é afiliado, endossado nem mantido** pela equipa oficial do RustDesk." >> RELEASE_BODY.md
+          echo "" >> RELEASE_BODY.md
+          echo "Utilize por sua conta e risco. Para a versão oficial, downloads directos e suporte, visite [rustdesk.com](https://rustdesk.com/)." >> RELEASE_BODY.md
+          echo "" >> RELEASE_BODY.md
+          echo "---" >> RELEASE_BODY.md
+          echo "" >> RELEASE_BODY.md
           
           # Anexar o changelog limpo ao aviso
           cat CHANGELOG_ONLY.md >> RELEASE_BODY.md
@@ -78,7 +81,7 @@ EOF
           echo "A renomear $ORIGINAL_NAME para $NEW_NAME"
           mv rustdesk_temp.deb "$NEW_NAME"
           
-          # Exportar variáveis para os passos seguintes
+          # Exportar variaveis para os passos seguintes
           echo "DEB_FILE=$NEW_NAME" >> $GITHUB_ENV
           echo "RELEASE_TAG=$TAG_NAME" >> $GITHUB_ENV
           
@@ -116,7 +119,7 @@ EOF
           APT::FTPArchive::Release::Codename "stable";
           APT::FTPArchive::Release::Architectures "amd64";
           APT::FTPArchive::Release::Components "main";
-          APT::FTPArchive::Release::Description "Repositório não oficial de pacotes Debian para RustDesk";
+          APT::FTPArchive::Release::Description "Repositorio nao oficial de pacotes Debian para RustDesk";
           EOF
 
           cd dists/stable
