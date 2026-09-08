@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # Necessário para criar Releases e fazer upload de activos
+  contents: write
   pages: write
   id-token: write
 
@@ -29,7 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev apt-utils gnupg curl jq
 
-      - name: Descarregar .deb e obter changelog original
+      - name: Descarregar .deb e preparar changelog limpo
         run: |
           # 1. Obter dados do último release oficial do RustDesk
           RELEASE_DATA=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest)
@@ -42,14 +42,32 @@ jobs:
             exit 1
           fi
 
-          # 3. Extrair tag da versão e corpo do changelog
+          # 3. Extrair tag da versão e corpo do release
           TAG_NAME=$(echo "$RELEASE_DATA" | jq -r '.tag_name')
-          CHANGELOG=$(echo "$RELEASE_DATA" | jq -r '.body')
+          FULL_BODY=$(echo "$RELEASE_DATA" | jq -r '.body // ""')
           
-          # Guardar o changelog num ficheiro para usar na Release
-          echo "$CHANGELOG" > RELEASE_BODY.md
+          echo "$FULL_BODY" > FULL_BODY.md
           
-          # 4. Descarregar e normalizar o nome do ficheiro
+          # 4. Filtrar APENAS o changelog (remove a tabela de downloads e texto promocional)
+          # Procura pela primeira ocorrência de "Changelog" (com ou sem #) e imprime daí para a frente
+          awk 'BEGIN{IGNORECASE=1} /^#? *changelog/ {found=1} found' FULL_BODY.md > CHANGELOG_ONLY.md
+          
+          # 5. Criar o ficheiro final com o aviso de scam no topo
+          cat << 'EOF' > RELEASE_BODY.md
+⚠️ **AVISO DE SEGURANÇA / SCAM WARNING** ⚠️
+
+Este repositório é **NÃO OFICIAL**. O ficheiro `.deb` foi obtido automaticamente do repositório oficial do RustDesk, mas este repositório de pacotes APT **não é afiliado, endossado nem mantido** pela equipa oficial do RustDesk. 
+
+Utilize por sua conta e risco. Para a versão oficial, downloads directos e suporte, visite [rustdesk.com](https://rustdesk.com/).
+
+---
+
+EOF
+          
+          # Anexar o changelog limpo ao aviso
+          cat CHANGELOG_ONLY.md >> RELEASE_BODY.md
+          
+          # 6. Descarregar e normalizar o nome do ficheiro
           echo "A descarregar: $DEB_URL"
           curl -L -o rustdesk_temp.deb "$DEB_URL"
           
@@ -121,11 +139,11 @@ jobs:
       - name: Publicar no GitHub Pages
         uses: actions/deploy-pages@v4
 
-      - name: Criar Release no GitHub com o .deb e changelog
+      - name: Criar Release no GitHub com o .deb e changelog limpo
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: RustDesk ${{ env.RELEASE_TAG }} (Unofficial APT)
+          name: RustDesk ${{ env.RELEASE_TAG }}
           body_path: RELEASE_BODY.md
           files: ${{ env.DEB_FILE }}
           draft: false
